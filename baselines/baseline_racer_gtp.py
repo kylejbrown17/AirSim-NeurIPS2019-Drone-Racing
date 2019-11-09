@@ -8,7 +8,7 @@ import numpy as np
 import time
 # Use non interactive matplotlib backend
 import matplotlib
-matplotlib.use("TkAgg")
+# matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D #3d plotting
 
