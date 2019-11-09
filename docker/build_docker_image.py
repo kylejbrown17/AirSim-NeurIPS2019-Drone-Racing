@@ -23,7 +23,7 @@ def main(args):
 if __name__=="__main__":
     parser = ArgumentParser(description='AirSim Neurips-Game-of-Drones docker image builder')
     parser.add_argument('--dockerfile', type=str, default='Dockerfile', help='path to docker file')
-    parser.add_argument('--base_image', type=str, default="nvidia/cudagl:10.0-devel-ubuntu18.04", help='base image name AND tag, on top of which the target image is built')
+    parser.add_argument('--base_image', type=str, default="nvidia/cudagl:10.0-devel-ubuntu16.04", help='base image name AND tag, on top of which the target image is built')
     parser.add_argument('--target_image', type=str, help='desired name of target image name AND tag')
 
     args = parser.parse_args()

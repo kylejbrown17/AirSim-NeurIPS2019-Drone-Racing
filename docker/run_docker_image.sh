@@ -17,10 +17,10 @@
 # This script takes three optional arguments
 
 # 1st argument is the name (and tag) of the dockerfile to run
-# by default, it is set to "airsim_neurips:10.0-devel-ubuntu18.04"
+# by default, it is set to "airsim_neurips:10.0-devel-ubuntu16.04"
 # else user can specify a docker image as follows:
 # $ ./run_docker_image.sh DOCKER_IMAGE_NAME:TAG
-DOCKER_IMAGE_NAME=${1:-airsim_neurips:10.0-devel-ubuntu18.04}
+DOCKER_IMAGE_NAME=${1:-airsim_neurips:10.0-devel-ubuntu16.04}
 
 # 2nd argument: can be "training" or "qualification"
 TRAINING_OR_QUALIFICATION=${2:-training}
