@@ -168,6 +168,7 @@ class IBRController:
         """
         i_opp = (i_ego + 1) % 2
         v_ego = self.drone_params[i_ego]["v_max"]
+        a_max = self.drone_params[i_ego]["a_max"]
         r_coll_ego = self.drone_params[i_ego]["r_coll"]
         r_coll_opp = self.drone_params[i_opp]["r_coll"]
         r_safe_ego = self.drone_params[i_ego]["r_safe"]
@@ -175,13 +176,24 @@ class IBRController:
         d_coll = r_coll_ego + r_coll_opp
         d_safe = r_safe_ego + r_safe_opp
         p = cp.Variable(shape=(self.n_steps, 3))
+        v = cp.Variable(shape=(self.n_steps, 3))
+        a = cp.Variable(shape=(self.n_steps, 3))
 
         # === Dynamical Constraints ===
-        # ||p_0 - p[0]|| <= v*dt
-        init_dyn_constraint = cp.SOC(cp.Constant(v_ego * self.dt), cp.Constant(state[i_ego, :]) - p[0, :])
-        # ||p[k+1] - p[k]|| <= v*dt
-        dyn_constraints = [init_dyn_constraint] + [
-            cp.SOC(cp.Constant(v_ego * self.dt), p[k + 1, :] - p[k, :]) for k in range(self.n_steps - 1)]
+        dyn_constraints = []
+        dyn_constraints.append( p[0,:] == state[i_ego,:] )
+        for k in range(self.n_steps-1):   
+            dyn_constraints.append(p[k+1,:] == p[k,:] + v[k,:]*self.dt + (1/2)*a[k,:]*cp.Constant(self.dt**2))
+            dyn_constraints.append(v[k+1,:] == v[k,:] + a[k,:]*self.dt)
+        for k in range(self.n_steps):   
+            dyn_constraints.append(cp.SOC(cp.Constant(v_ego), v[k,:]))
+            dyn_constraints.append(cp.SOC(cp.Constant(a_max), a[k,:]))
+            
+#         # ||p_0 - p[0]|| <= v*dt
+#         init_dyn_constraint = cp.SOC(cp.Constant(v_ego * self.dt), cp.Constant(state[i_ego, :]) - p[0, :])
+#         # ||p[k+1] - p[k]|| <= v*dt
+#         dyn_constraints = [init_dyn_constraint] + [
+#             cp.SOC(cp.Constant(v_ego * self.dt), p[k + 1, :] - p[k, :]) for k in range(self.n_steps - 1)]
 
         # === Track Constraints ===
         track_constraints = []
