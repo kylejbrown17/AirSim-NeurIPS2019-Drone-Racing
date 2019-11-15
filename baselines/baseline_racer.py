@@ -21,6 +21,7 @@ class BaselineRacer(object):
         self.airsim_client.confirmConnection()
         self.gate_inner_dims = self.airsim_client.simGetNominalGateInnerDimensions()
         self.gate_outer_dims = self.airsim_client.simGetNominalGateOuterDimensions()
+        # self.get_ground_truth_gate_poses()
         # we need two airsim MultirotorClient objects because the comm lib we use (rpclib) is not thread safe
         # so we poll images in a thread using one airsim MultirotorClient object
         # and use another airsim MultirotorClient for querying state commands
@@ -89,17 +90,18 @@ class BaselineRacer(object):
         gate_indices_bad = [int(gate_name.split('_')[0][4:]) for gate_name in gate_names_sorted_bad]
         gate_indices_correct = sorted(range(len(gate_indices_bad)), key=lambda k: gate_indices_bad[k])
         gate_names_sorted = [gate_names_sorted_bad[gate_idx] for gate_idx in gate_indices_correct]
+        print(gate_names_sorted)
         self.gate_poses_ground_truth = []
         for gate_name in gate_names_sorted:
             curr_pose = self.airsim_client.simGetObjectPose(gate_name)
             counter = 0
             while (math.isnan(curr_pose.position.x_val) or math.isnan(curr_pose.position.y_val) or math.isnan(curr_pose.position.z_val)) and (counter < self.MAX_NUMBER_OF_GETOBJECTPOSE_TRIALS):
-                print("DEBUG: {gate_name} position is nan, retrying...")
+                print("DEBUG: gate ",gate_name," position is nan, retrying...")
                 counter += 1
                 curr_pose = self.airsim_client.simGetObjectPose(gate_name)
-            assert not math.isnan(curr_pose.position.x_val), "ERROR: {gate_name} curr_pose.position.x_val is still {curr_pose.position.x_val} after {counter} trials"
-            assert not math.isnan(curr_pose.position.y_val), "ERROR: {gate_name} curr_pose.position.y_val is still {curr_pose.position.y_val} after {counter} trials"
-            assert not math.isnan(curr_pose.position.z_val), "ERROR: {gate_name} curr_pose.position.z_val is still {curr_pose.position.z_val} after {counter} trials"
+            assert not math.isnan(curr_pose.position.x_val), f"ERROR: {gate_name} curr_pose.position.x_val is still {curr_pose.position.x_val} after {counter} trials"
+            assert not math.isnan(curr_pose.position.y_val), f"ERROR: {gate_name} curr_pose.position.y_val is still {curr_pose.position.y_val} after {counter} trials"
+            assert not math.isnan(curr_pose.position.z_val), f"ERROR: {gate_name} curr_pose.position.z_val is still {curr_pose.position.z_val} after {counter} trials"
             self.gate_poses_ground_truth.append(curr_pose)
 
     # this is utility function to get a velocity constraint which can be passed to moveOnSplineVelConstraints()
@@ -128,6 +130,8 @@ class BaselineRacer(object):
         if self.level_name in ["Soccer_Field_Medium", "Soccer_Field_Easy", "ZhangJiaJie_Medium"] :
             vel_max = 10.0
             acc_max = 5.0
+
+        print("fly_through_all_gates_one_by_one_with_moveOnSpline: WHERE DOES gate_pose COME FROM?")
 
         return self.airsim_client.moveOnSplineAsync([gate_pose.position], vel_max=vel_max, acc_max=acc_max,
             add_position_constraint=True, add_velocity_constraint=False, add_acceleration_constraint=False, viz_traj=self.viz_traj, viz_traj_color_rgba=self.viz_traj_color_rgba, vehicle_name=self.drone_name)
@@ -249,11 +253,6 @@ def main(args):
     baseline_racer = BaselineRacer(drone_name="drone_1", viz_traj=args.viz_traj, viz_traj_color_rgba=[1.0, 1.0, 0.0, 1.0], viz_image_cv2=args.viz_image_cv2)
     baseline_racer.load_level(args.level_name)
     baseline_racer.get_ground_truth_gate_poses()
-    print("gate_inner_dims=",baseline_racer.gate_inner_dims)
-    print("gate_outer_dims=",baseline_racer.gate_outer_dims)
-    print("gate_poses=",baseline_racer.gate_poses_ground_truth)
-    # print("gate_inner_dims=",racer.gate_inner_dims)
-    # print("gate_outer_dims=",racer.gate_outer_dims)
     if args.level_name == "Qualifier_Tier_1":
         args.race_tier = 1
     if args.level_name == "Qualifier_Tier_2":
