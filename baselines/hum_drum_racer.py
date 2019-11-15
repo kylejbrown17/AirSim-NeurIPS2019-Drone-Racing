@@ -50,7 +50,10 @@ class GlobalTrajectoryOptimizer():
             pose = self.gate_poses[gate_idx]
             pos = [pose.position.x_val, pose.position.y_val, pose.position.z_val]
             orientation = [pose.orientation.w_val, pose.orientation.x_val, pose.orientation.y_val, pose.orientation.z_val]
-            inner_width = [self.gate_inner_dims.x_val, self.gate_inner_dims.y_val, self.gate_inner_dims.z_val]
+            inner_width = [
+                self.gate_inner_dims.x_val,
+                self.gate_inner_dims.y_val - 2*self.traj_params.r_safe, 
+                self.gate_inner_dims.z_val - 2*self.traj_params.r_safe]
             Main.gate = dr.Gate3D(pos,orientation,inner_width)
             Main.eval("push!(traj_opt_model.gates, gate)")
         ########################################################################
@@ -168,8 +171,8 @@ class HumDrumRacer(BaselineRacer):
                 to_airsim_vectors(trajectory[self.step:np.min([self.step+self.traj_params.horizon,len(trajectory)]), :]),
                 add_position_constraint=False,
                 add_velocity_constraint=True,
-                vel_max=self.drone_params[self.drone_i]["v_max"],
-                acc_max=self.drone_params[self.drone_i]["a_max"],
+                vel_max=self.traj_params.v_max,
+                acc_max=self.traj_params.a_max,
                 viz_traj=self.viz_traj,
                 vehicle_name=self.drone_name,
                 replan_from_lookahead=False,
@@ -190,8 +193,8 @@ class HumDrumRacer(BaselineRacer):
                 to_airsim_vectors(vel_constraints),
                 add_position_constraint=True,
                 add_velocity_constraint=True,
-                vel_max=self.drone_params[self.drone_i]["v_max"],
-                acc_max=self.drone_params[self.drone_i]["a_max"],
+                vel_max=self.traj_params.v_max,
+                acc_max=self.traj_params.a_max,
                 viz_traj=self.viz_traj,
                 vehicle_name=self.drone_name)
 
@@ -264,7 +267,7 @@ if __name__ == "__main__":
     parser.add_argument('--r_safe', type=float, default=0.0)
     parser.add_argument('--v_max', type=float, default=80.0)
     parser.add_argument('--a_max', type=float, default=40.0)
-    parser.add_argument('--n', type=int, default=14)
+    parser.add_argument('--n', type=int, default=8)
     parser.add_argument('--horizon', type=int, default=10)
     parser.add_argument('--vel_constraints', dest='vel_constraints', action='store_true', default=False)
     parser.add_argument('--level_name', type=str, choices=["Soccer_Field_Easy", "Soccer_Field_Medium", "ZhangJiaJie_Medium", "Building99_Hard",
