@@ -57,7 +57,11 @@ class GlobalTrajectoryOptimizer():
             gate_idxs = range(len(self.gate_poses))
         for gate_idx in gate_idxs:
             pose = self.gate_poses[gate_idx]
-            pos = [pose.position.x_val, pose.position.y_val, pose.position.z_val]
+            pos = [
+                pose.position.x_val, 
+                pose.position.y_val,
+                pose.position.z_val
+                ]
             orientation = [pose.orientation.w_val, pose.orientation.x_val, pose.orientation.y_val, pose.orientation.z_val]
             # inner_width = [
             #     self.gate_inner_dims.x_val,
