@@ -34,6 +34,23 @@ class GlobalTrajectoryOptimizer():
         self.gate_inner_dims = gate_inner_dims
         self.gate_outer_dims = gate_outer_dims
 
+    def quat_to_julia_vec(self,quat):
+        vec = [
+            quat.w_val,
+            quat.z_val,
+            quat.x_val,
+            quat.y_val
+        ]
+        return vec
+
+    def pos_to_julia_vec(self,pos):
+        vec = [
+            pos.x_val,
+            pos.y_val,
+            pos.z_val
+        ]
+        return vec
+
     def compute_global_optimal_trajectory(self,start_state,
         gate_idxs=[],**kwargs):
         # Get current state
@@ -57,16 +74,9 @@ class GlobalTrajectoryOptimizer():
             gate_idxs = range(len(self.gate_poses))
         for gate_idx in gate_idxs:
             pose = self.gate_poses[gate_idx]
-            pos = [
-                pose.position.x_val, 
-                pose.position.y_val,
-                pose.position.z_val
-                ]
-            orientation = [pose.orientation.w_val, pose.orientation.x_val, pose.orientation.y_val, pose.orientation.z_val]
-            # inner_width = [
-            #     self.gate_inner_dims.x_val,
-            #     self.gate_inner_dims.y_val - 2*self.traj_params.r_safe,
-            #     self.gate_inner_dims.z_val - 2*self.traj_params.r_safe]
+            pos = self.pos_to_julia_vec(pose.position)
+            orientation = self.quat_to_julia_vec(pose.orientation)
+
             inner_width = [
                 self.gate_inner_dims.y_val, # rearrange because gates point along y-direction
                 self.gate_inner_dims.x_val,
