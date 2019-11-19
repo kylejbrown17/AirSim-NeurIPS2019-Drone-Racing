@@ -2,6 +2,7 @@ from baseline_racer import BaselineRacer
 from gtp_visualize import *
 from utils import to_airsim_vector, to_airsim_vectors
 import airsimneurips as airsim
+import threading
 import argparse
 import gtp
 import numpy as np
@@ -114,6 +115,11 @@ class HumDrumRacer(BaselineRacer):
         self.traj_params = traj_params
         self.use_vel_constraints = use_vel_constraints
         self.planning_cycles = 0
+        self.is_replanning_thread_active = False
+        self.replanning_callback_thread = threading.Thread(
+            target=self.repeat_timer_replanning_callback,
+            args=(self.replanning_callback, 0.05)
+            )
 
         self.load_level(args.level_name)
         self.get_ground_truth_gate_poses()
@@ -136,12 +142,31 @@ class HumDrumRacer(BaselineRacer):
         print("trajectory start point: ",self.traj.pos[0,:])
         print("controller ready!")
 
+    def repeat_timer_replanning_callback(self, task, period):
+        while self.is_replanning_thread_active:
+            task()
+            time.sleep(period)
+
+    def replanning_callback(self):
+        print("replanning_callback")
+        pass
+
+
+    def start_replanning_callback_thread(self):
+        if not self.is_replanning_thread_active:
+            self.is_replanning_thread_active = True
+            self.replanning_callback_thread.start()
+            print("Started replanning callback thread")
+
+
+    def stop_replanning_callback_thread(self):
+        if self.is_replanning_thread_active:
+            self.is_replanning_thread_active = False
+            self.replanning_callback_thread.join()
+            print("Stopped replanning callback thread.")
+
 
     def compute_global_optimal_trajectory(self):
-        """
-        Compute a globally optimal trajectory
-        """
-        # Get current state
         start_state = self.airsim_client.getMultirotorState()
         self.traj = self.global_traj_optimizer.compute_global_optimal_trajectory(start_state)
         return
@@ -156,6 +181,10 @@ class HumDrumRacer(BaselineRacer):
                 self.step = k
                 return self.step
         return self.step
+
+    def direct_velocity_command():
+
+        pass
 
 
     def update_and_plan(self):
@@ -176,11 +205,12 @@ class HumDrumRacer(BaselineRacer):
             print('DEBUG: truncating entire trajectory, k_truncate = {}'.format(k_truncate))
 
         # finally issue the command to AirSim.
+        clipped_traj = trajectory[self.step:np.min([self.step+self.traj_params.horizon,len(self.traj.t_vec)]), :]
         if not self.use_vel_constraints:
             # this returns a future, that we do not call .join() on, as we want to re-issue a new command
             # once we compute the next iteration of our high-level planner
             self.airsim_client.moveOnSplineAsync(
-                to_airsim_vectors(trajectory[self.step:np.min([self.step+self.traj_params.horizon,len(self.traj.t_vec)]), :]),
+                to_airsim_vectors(clipped_traj),
                 add_position_constraint = False,
                 add_velocity_constraint = True,
                 vel_max = self.traj_params.v_max,
@@ -188,27 +218,29 @@ class HumDrumRacer(BaselineRacer):
                 viz_traj = self.viz_traj,
                 vehicle_name = self.drone_name,
                 replan_from_lookahead = self.traj_params.replan_from_lookahead,
-                replan_lookahead_sec = 0.0)
+                replan_lookahead_sec = self.traj_params.lookahead_sec)
         else:
             # Compute the velocity as the difference between waypoints
-            vel_constraints = trajectory.vel[k_truncate:, :]
+            vel_constraints = self.traj.vel[self.step:np.min([self.step+self.traj_params.horizon,len(self.traj.t_vec)]), :]
             # vel_constraints[1:, :] = trajectory[k_truncate + 1:, :] - trajectory[k_truncate:-1, :]
             # If we use the whole trajectory, the velocity constraint at the first point
             # is computed using the current position
-            if k_truncate == 0:
-                vel_constraints[0, :] = trajectory[k_truncate, :] - new_state_i
-            else:
-                vel_constraints[0, :] = trajectory[k_truncate, :] - trajectory[k_truncate - 1, :]
+            # if k_truncate == 0:
+            #     vel_constraints[0, :] = trajectory[k_truncate, :] - new_state_i
+            # else:
+            #     vel_constraints[0, :] = trajectory[k_truncate, :] - trajectory[k_truncate - 1, :]
 
             self.airsim_client.moveOnSplineVelConstraintsAsync(
-                to_airsim_vectors(trajectory[k_truncate:, :]),
+                to_airsim_vectors(clipped_traj),
                 to_airsim_vectors(vel_constraints),
                 add_position_constraint=True,
                 add_velocity_constraint=True,
-                vel_max=self.traj_params.v_max,
-                acc_max=self.traj_params.a_max,
+                vel_max=self.traj_params.v_max + 10,
+                acc_max=self.traj_params.a_max + 10,
                 viz_traj=self.viz_traj,
-                vehicle_name=self.drone_name)
+                vehicle_name=self.drone_name
+                )
+        return
 
 
     def run(self):
@@ -267,12 +299,14 @@ def main(args):
 
     # racer.start_image_callback_thread()
     racer.start_odometry_callback_thread()
+    racer.start_replanning_callback_thread()
 
-    time.sleep(0.0)  # give opponent a little advantage
+    time.sleep(20.0)  # give opponent a little advantage
     racer.run()
 
     # racer.stop_image_callback_thread()
     racer.stop_odometry_callback_thread()
+    racer.stop_replanning_callback_thread()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='')
@@ -285,6 +319,7 @@ if __name__ == "__main__":
     parser.add_argument('--horizon', type=int, default=10)
     parser.add_argument('--no_resample', dest='resample', action='store_false', default=True)
     parser.add_argument('--replan_from_lookahead', dest='replan_from_lookahead', action='store_true', default=False)
+    parser.add_argument('--lookahead_sec',type=float, default=0.0)
     parser.add_argument('--vel_constraints', dest='vel_constraints', action='store_true', default=False)
     parser.add_argument('--level_name', type=str, choices=["Soccer_Field_Easy", "Soccer_Field_Medium", "ZhangJiaJie_Medium", "Building99_Hard",
         "Qualifier_Tier_1", "Qualifier_Tier_2", "Qualifier_Tier_3"], default="Qualifier_Tier_1")

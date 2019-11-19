@@ -203,6 +203,7 @@ class BaselineRacer(object):
             cv2.waitKey(1)
 
     def odometry_callback(self):
+        print("odometry callback")
         self.state = self.airsim_client_odom.getMultirotorState()
         # in world frame:
         # position = drone_state.kinematics_estimated.position
