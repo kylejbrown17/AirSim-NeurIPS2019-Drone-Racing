@@ -76,6 +76,8 @@ class GlobalTrajectoryOptimizer():
             pose = self.gate_poses[gate_idx]
             pos = self.pos_to_julia_vec(pose.position)
             orientation = self.quat_to_julia_vec(pose.orientation)
+#             print("position:", pos)
+#             print("orientation:", orientation)
 
             inner_width = [
                 self.gate_inner_dims.y_val, # rearrange because gates point along y-direction
@@ -100,7 +102,6 @@ class GlobalTrajectoryOptimizer():
             accel = dr.get_a(Main.traj_opt_model,Main.JuMP_model)
             t_vec = dr.get_t_vec(Main.traj_opt_model,Main.JuMP_model)
         return Trajectory(pos,vel,accel,t_vec)
-
 
 class HumDrumRacer(BaselineRacer):
     def __init__(self, traj_params, drone_names, drone_i, drone_params,
