@@ -59,16 +59,22 @@ class GlobalTrajectoryOptimizer():
             pose = self.gate_poses[gate_idx]
             pos = [pose.position.x_val, pose.position.y_val, pose.position.z_val]
             orientation = [pose.orientation.w_val, pose.orientation.x_val, pose.orientation.y_val, pose.orientation.z_val]
+            # inner_width = [
+            #     self.gate_inner_dims.x_val,
+            #     self.gate_inner_dims.y_val - 2*self.traj_params.r_safe,
+            #     self.gate_inner_dims.z_val - 2*self.traj_params.r_safe]
             inner_width = [
+                self.gate_inner_dims.y_val, # rearrange because gates point along y-direction
                 self.gate_inner_dims.x_val,
-                self.gate_inner_dims.y_val - 2*self.traj_params.r_safe,
-                self.gate_inner_dims.z_val - 2*self.traj_params.r_safe]
+                self.gate_inner_dims.z_val]
             Main.gate = dr.Gate3D(pos,orientation,inner_width)
-            Main.eval("push!(traj_opt_model.gates, gate)")
+            dr.add_gate(Main.traj_opt_model,Main.gate)
+            # Main.eval("push!(traj_opt_model.gates, gate)")
         ########################################################################
         ######################### Optimize Ipopt model #########################
         Main.JuMP_model = dr.formulate_global_traj_opt_problem(Main.traj_opt_model)
-        Main.eval("DroneRacing.optimize_trajectory!(traj_opt_model,JuMP_model)")
+        # Main.eval("DroneRacing.optimize_trajectory!(traj_opt_model,JuMP_model)")
+        dr.optimize_trajectory(Main.traj_opt_model,Main.JuMP_model)
         ########################################################################
         if self.traj_params.resample:
             # resample with a constant timestep
