@@ -118,7 +118,7 @@ class HumDrumRacer(BaselineRacer):
         self.is_replanning_thread_active = False
         self.replanning_callback_thread = threading.Thread(
             target=self.repeat_timer_replanning_callback,
-            args=(self.replanning_callback, 0.05)
+            args=(self.replanning_callback, self.traj_params.dt_planner)
             )
 
         self.load_level(args.level_name)
@@ -148,6 +148,8 @@ class HumDrumRacer(BaselineRacer):
             time.sleep(period)
 
     def replanning_callback(self):
+        self.direct_velocity_command()
+        self.step += 1
         print("replanning_callback")
         pass
 
@@ -183,8 +185,9 @@ class HumDrumRacer(BaselineRacer):
         return self.step
 
     def direct_velocity_command():
-
-        pass
+        idx = np.min([self.step,len(self.traj.t_vec)-1])
+        v = self.traj.vel[idx,:]
+        self.airsim_client.moveByVelocityAsync(v[0],v[1],v[2])
 
 
     def update_and_plan(self):
@@ -244,8 +247,12 @@ class HumDrumRacer(BaselineRacer):
 
 
     def run(self):
+        racer.start_replanning_callback_thread()
         while self.airsim_client.isApiControlEnabled(vehicle_name=self.drone_name):
-            self.update_and_plan()
+            # self.update_and_plan()
+            if self.step > len(self.traj.t_vec):
+                break
+        racer.stop_replanning_callback_thread()
 
 def main(args):
     drone_names = ["drone_1", "drone_2"]
@@ -299,18 +306,19 @@ def main(args):
 
     # racer.start_image_callback_thread()
     racer.start_odometry_callback_thread()
-    racer.start_replanning_callback_thread()
+    # racer.start_replanning_callback_thread()
 
-    time.sleep(20.0)  # give opponent a little advantage
+    time.sleep(0.0)  # give opponent a little advantage
     racer.run()
 
     # racer.stop_image_callback_thread()
     racer.stop_odometry_callback_thread()
-    racer.stop_replanning_callback_thread()
+    # racer.stop_replanning_callback_thread()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='')
     parser.add_argument('--dt', type=float, default=0.05)
+    parser.add_argument('--dt_planner', type=float, default=0.05)
     parser.add_argument('--dt_min', type=float, default=0.05)
     parser.add_argument('--r_safe', type=float, default=0.0)
     parser.add_argument('--v_max', type=float, default=80.0)
