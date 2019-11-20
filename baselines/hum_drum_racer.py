@@ -75,9 +75,6 @@ class GlobalTrajectoryOptimizer():
         start_pos = start_state.kinematics_estimated.position
         start_vel = start_state.kinematics_estimated.linear_velocity
         ####################### Pass information to Julia ######################
-        # Main.start_pos = [start_pos.x_val, start_pos.y_val, start_pos.z_val]
-        # Main.start_vel = [start_vel.x_val, start_vel.y_val, start_vel.z_val]
-        # Main.traj_opt_model = dr.VariableTimeParticleTrajOptModel(
         traj_opt_model = dr.VariableTimeParticleTrajOptModel(
             start_pos = [start_pos.x_val, start_pos.y_val, start_pos.z_val],
             start_vel = [start_vel.x_val, start_vel.y_val, start_vel.z_val],
@@ -95,35 +92,22 @@ class GlobalTrajectoryOptimizer():
             pose = self.gate_poses[gate_idx]
             pos = self.pos_to_julia_vec(pose.position)
             orientation = self.quat_to_julia_vec(pose.orientation)
-#             print("position:", pos)
-#             print("orientation:", orientation)
 
             inner_width = [
                 self.gate_inner_dims.y_val, # rearrange because gates point along y-direction
                 self.gate_inner_dims.x_val,
                 self.gate_inner_dims.z_val]
-            # Main.gate = dr.Gate3D(pos,orientation,inner_width)
-            gate = dr.Gate3D(pos,orientation,inner_width)
-            # dr.add_gate(Main.traj_opt_model,Main.gate)
-            dr.add_gate(traj_opt_model,gate)
-            # Main.eval("push!(traj_opt_model.gates, gate)")
+            dr.add_gate(traj_opt_model,dr.Gate3D(pos,orientation,inner_width))
         ########################################################################
         ######################### Optimize Ipopt model #########################
-        # Main.JuMP_model = dr.formulate_global_traj_opt_problem(Main.traj_opt_model)
         JuMP_model = dr.formulate_global_traj_opt_problem(traj_opt_model)
-        # Main.eval("DroneRacing.optimize_trajectory!(traj_opt_model,JuMP_model)")
         dr.optimize_trajectory(traj_opt_model,JuMP_model)
         ########################################################################
         if self.traj_params.resample:
             # resample with a constant timestep
-            # pos,vel,accel,t_vec = dr.resample_traj_exact(Main.traj_opt_model,Main.JuMP_model)
             pos,vel,accel,t_vec = dr.resample_traj_exact(traj_opt_model,JuMP_model)
         else:
             # leave with a variable time step
-            # pos = dr.get_x(Main.traj_opt_model,Main.JuMP_model)
-            # vel = dr.get_v(Main.traj_opt_model,Main.JuMP_model)
-            # accel = dr.get_a(Main.traj_opt_model,Main.JuMP_model)
-            # t_vec = dr.get_t_vec(Main.traj_opt_model,Main.JuMP_model)
             pos = dr.get_x(traj_opt_model,JuMP_model)
             vel = dr.get_v(traj_opt_model,JuMP_model)
             accel = dr.get_a(traj_opt_model,JuMP_model)
@@ -173,6 +157,13 @@ class HumDrumRacer(BaselineRacer):
         start_state.kinematics_estimated.position.z_val += TAKEOFF_SHIFT
         self.traj = self.global_traj_optimizer.compute_global_optimal_trajectory(start_state)
         self.step = 0
+
+        velocity_gains = airsim.VelocityControllerGains(
+            xGains = airsim.PIDGains(2.0, 0.2, 2.0), # default: 0.2, 0.0, 0.0
+            yGains = airsim.PIDGains(2.0, 0.2, 2.0), # default: 0.2, 0.0, 0.0
+            zGains = airsim.PIDGains(2.0, 0.2, 2.0)  # default: 2.0, 0.0, 2.0
+        )
+        self.airsim_client.setVelocityControllerGains(velocity_gains)
 
         print("start_state = ",start_state)
         print("trajectory start point: ",self.traj.pos[0,:])
