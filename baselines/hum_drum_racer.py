@@ -14,10 +14,11 @@ import time
 # from mpl_toolkits.mplot3d import Axes3D #3d plotting
 
 # Julia interface to JuMP / Ipopt
-print("Loading Julia...\n")
-import julia
-from julia import Main
-from julia import DroneRacing as dr
+# print("Loading Julia...\n")
+# import julia
+# from julia import Main
+# from julia import DroneRacing as dr
+dr = None
 
 class Trajectory():
     def __init__(self,pos,vel,accel,t_vec):
@@ -34,6 +35,16 @@ class GlobalTrajectoryOptimizer():
         self.gate_poses = gate_poses
         self.gate_inner_dims = gate_inner_dims
         self.gate_outer_dims = gate_outer_dims
+        if self.traj_params.load_traj_from_file:
+            pass
+        else:
+            print("Loading Julia...\n")
+            import julia
+            from julia import Main
+            from julia import DroneRacing
+            global dr
+            dr = DroneRacing
+            dr.warmup()
 
     def quat_to_julia_vec(self,quat):
         vec = [
@@ -54,13 +65,20 @@ class GlobalTrajectoryOptimizer():
 
     def compute_global_optimal_trajectory(self,start_state,
         gate_idxs=[],**kwargs):
+        if self.traj_params.load_traj_from_file:
+            pos = np.load("pos.npy")
+            vel = np.load("vel.npy")
+            accel = np.load("accel.npy")
+            t_vec = np.load("t_vec.npy")
+            return Trajectory(pos,vel,accel,t_vec)
         # Get current state
         start_pos = start_state.kinematics_estimated.position
         start_vel = start_state.kinematics_estimated.linear_velocity
         ####################### Pass information to Julia ######################
-        Main.start_pos = [start_pos.x_val, start_pos.y_val, start_pos.z_val]
-        Main.start_vel = [start_vel.x_val, start_vel.y_val, start_vel.z_val]
-        Main.traj_opt_model = dr.VariableTimeParticleTrajOptModel(
+        # Main.start_pos = [start_pos.x_val, start_pos.y_val, start_pos.z_val]
+        # Main.start_vel = [start_vel.x_val, start_vel.y_val, start_vel.z_val]
+        # Main.traj_opt_model = dr.VariableTimeParticleTrajOptModel(
+        traj_opt_model = dr.VariableTimeParticleTrajOptModel(
             start_pos = [start_pos.x_val, start_pos.y_val, start_pos.z_val],
             start_vel = [start_vel.x_val, start_vel.y_val, start_vel.z_val],
             MAX_VEL = self.traj_params.v_max,
@@ -84,25 +102,43 @@ class GlobalTrajectoryOptimizer():
                 self.gate_inner_dims.y_val, # rearrange because gates point along y-direction
                 self.gate_inner_dims.x_val,
                 self.gate_inner_dims.z_val]
-            Main.gate = dr.Gate3D(pos,orientation,inner_width)
-            dr.add_gate(Main.traj_opt_model,Main.gate)
+            # Main.gate = dr.Gate3D(pos,orientation,inner_width)
+            gate = dr.Gate3D(pos,orientation,inner_width)
+            # dr.add_gate(Main.traj_opt_model,Main.gate)
+            dr.add_gate(traj_opt_model,gate)
             # Main.eval("push!(traj_opt_model.gates, gate)")
         ########################################################################
         ######################### Optimize Ipopt model #########################
-        Main.JuMP_model = dr.formulate_global_traj_opt_problem(Main.traj_opt_model)
+        # Main.JuMP_model = dr.formulate_global_traj_opt_problem(Main.traj_opt_model)
+        JuMP_model = dr.formulate_global_traj_opt_problem(traj_opt_model)
         # Main.eval("DroneRacing.optimize_trajectory!(traj_opt_model,JuMP_model)")
-        dr.optimize_trajectory(Main.traj_opt_model,Main.JuMP_model)
+        dr.optimize_trajectory(traj_opt_model,JuMP_model)
         ########################################################################
         if self.traj_params.resample:
             # resample with a constant timestep
-            pos,vel,accel,t_vec = dr.resample_traj_exact(Main.traj_opt_model,Main.JuMP_model)
+            # pos,vel,accel,t_vec = dr.resample_traj_exact(Main.traj_opt_model,Main.JuMP_model)
+            pos,vel,accel,t_vec = dr.resample_traj_exact(traj_opt_model,JuMP_model)
         else:
             # leave with a variable time step
-            pos = dr.get_x(Main.traj_opt_model,Main.JuMP_model)
-            vel = dr.get_v(Main.traj_opt_model,Main.JuMP_model)
-            accel = dr.get_a(Main.traj_opt_model,Main.JuMP_model)
-            t_vec = dr.get_t_vec(Main.traj_opt_model,Main.JuMP_model)
+            # pos = dr.get_x(Main.traj_opt_model,Main.JuMP_model)
+            # vel = dr.get_v(Main.traj_opt_model,Main.JuMP_model)
+            # accel = dr.get_a(Main.traj_opt_model,Main.JuMP_model)
+            # t_vec = dr.get_t_vec(Main.traj_opt_model,Main.JuMP_model)
+            pos = dr.get_x(traj_opt_model,JuMP_model)
+            vel = dr.get_v(traj_opt_model,JuMP_model)
+            accel = dr.get_a(traj_opt_model,JuMP_model)
+            t_vec = dr.get_t_vec(traj_opt_model,JuMP_model)
+        # Save
+        np.save("pos.npy",pos)
+        np.save("vel.npy",vel)
+        np.save("accel.npy",accel)
+        np.save("t_vec.npy",t_vec)
         return Trajectory(pos,vel,accel,t_vec)
+
+    def cache_trajectory(self):
+        filename = "pos.npy"
+
+        pass
 
 class HumDrumRacer(BaselineRacer):
     def __init__(self, traj_params, drone_names, drone_i, drone_params,
@@ -136,7 +172,7 @@ class HumDrumRacer(BaselineRacer):
         start_state = self.airsim_client.getMultirotorState()
         start_state.kinematics_estimated.position.z_val += TAKEOFF_SHIFT
         self.traj = self.global_traj_optimizer.compute_global_optimal_trajectory(start_state)
-        self.step = 1
+        self.step = 0
 
         print("start_state = ",start_state)
         print("trajectory start point: ",self.traj.pos[0,:])
@@ -184,10 +220,11 @@ class HumDrumRacer(BaselineRacer):
                 return self.step
         return self.step
 
-    def direct_velocity_command():
+    def direct_velocity_command(self):
         idx = np.min([self.step,len(self.traj.t_vec)-1])
         v = self.traj.vel[idx,:]
-        self.airsim_client.moveByVelocityAsync(v[0],v[1],v[2])
+        duration = self.traj_params.dt_planner
+        self.airsim_client.moveByVelocityAsync(v[0],v[1],v[2],duration)
 
 
     def update_and_plan(self):
@@ -247,12 +284,16 @@ class HumDrumRacer(BaselineRacer):
 
 
     def run(self):
-        racer.start_replanning_callback_thread()
+        # self.start_replanning_callback_thread()
         while self.airsim_client.isApiControlEnabled(vehicle_name=self.drone_name):
             # self.update_and_plan()
+            # self.direct_velocity_command()
+            self.replanning_callback()
+            time.sleep(self.traj_params.dt_planner)
+            self.step += 1
             if self.step > len(self.traj.t_vec):
                 break
-        racer.stop_replanning_callback_thread()
+        # self.stop_replanning_callback_thread()
 
 def main(args):
     drone_names = ["drone_1", "drone_2"]
@@ -285,7 +326,7 @@ def main(args):
     if args.level_name == "Qualifier_Tier_3":
         args.race_tier = 3
 
-    dr.warmup()
+    # dr.warmup()
     # ensure you have generated the neurips planning settings file by running python generate_settings_file.py
     racer = HumDrumRacer(
         traj_params=args,
@@ -325,6 +366,7 @@ if __name__ == "__main__":
     parser.add_argument('--a_max', type=float, default=40.0)
     parser.add_argument('--n', type=int, default=8)
     parser.add_argument('--horizon', type=int, default=10)
+    parser.add_argument('--load_traj_from_file', dest='load_traj_from_file', action='store_true', default=False)
     parser.add_argument('--no_resample', dest='resample', action='store_false', default=True)
     parser.add_argument('--replan_from_lookahead', dest='replan_from_lookahead', action='store_true', default=False)
     parser.add_argument('--lookahead_sec',type=float, default=0.0)
