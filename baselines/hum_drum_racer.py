@@ -410,7 +410,7 @@ class HumDrumRacer(BaselineRacer):
             self.airsim_client.moveOnSplineAsync(
                 to_airsim_vectors(clipped_traj),
                 add_position_constraint = False,
-                add_velocity_constraint = True,
+                add_velocity_constraint = False,
                 vel_max = self.traj_params.v_max,
                 acc_max = self.traj_params.a_max,
                 viz_traj = self.viz_traj,
@@ -446,17 +446,17 @@ class HumDrumRacer(BaselineRacer):
         self.state_estimate = self.airsim_client_odom.getMultirotorState()
         self.start_time = self.get_time_stamp() # set start time before entering control loop
         while self.airsim_client.isApiControlEnabled(vehicle_name=self.drone_name):
-            # self.update_and_plan()
+            self.update_and_plan()
             # self.direct_velocity_command()
-            try:
-                self.replanning_callback()
-                self.control_callback()
-                time.sleep(self.traj_params.dt_controller)
-                # if self.step > len(self.traj.t_vec):
-                #     break
-            except KeyboardInterrupt:
-                print("KeyboardInterrupt Received by HumDrumRacer. What to do?")
-                raise
+            # try:
+            #     self.replanning_callback()
+            #     self.control_callback()
+            #     time.sleep(self.traj_params.dt_controller)
+            #     # if self.step > len(self.traj.t_vec):
+            #     #     break
+            # except KeyboardInterrupt:
+            #     print("KeyboardInterrupt Received by HumDrumRacer. What to do?")
+            #     raise
         # self.stop_replanning_callback_thread()
 
 def main(args):

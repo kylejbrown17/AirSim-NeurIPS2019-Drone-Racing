@@ -1,6 +1,6 @@
 from argparse import ArgumentParser
 import airsimneurips as airsim
-import cv2
+# import cv2
 import threading
 import time
 import utils
