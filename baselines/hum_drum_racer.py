@@ -14,11 +14,12 @@ import time
 # from mpl_toolkits.mplot3d import Axes3D #3d plotting
 
 # Julia interface to JuMP / Ipopt
-# print("Loading Julia...\n")
-# import julia
-# from julia import Main
-# from julia import DroneRacing as dr
-dr = None
+print("Loading Julia...\n")
+import julia
+from julia import Main
+from julia import DroneRacing as dr
+dr.warmup()
+# dr = None
 
 class Trajectory():
     def __init__(self,pos,vel,accel,t_vec):
@@ -27,24 +28,45 @@ class Trajectory():
         self.accel = accel
         self.t_vec = t_vec
 
+    def to_julia_traj(self):
+        return dr.Trajectory(self.pos,self.vel,self.accel,self.t_vec)
 
-class GlobalTrajectoryOptimizer():
+class TrajectoryOptimizer():
+    """
+        Stores a spline trajectory that can be queried at any point in time to
+        return a position, velocity or acceleration command.
+    """
+    def __init__(self):
+        self.spline_traj = None # julia type
+
+    def get_accel_cmd(self,t):
+        return dr.extrapolate_traj(self.spline_traj.accel, t, 0)
+
+    def get_vel_cmd(self,t):
+        return dr.extrapolate_traj(self.spline_traj.vel, t, 1)
+
+    def get_vel_cmd(self,t):
+        return dr.extrapolate_traj(self.spline_traj.pos, t, 1)
+
+
+class GlobalTrajectoryOptimizer(TrajectoryOptimizer):
     def __init__(self,traj_params, drone_params, gate_poses, gate_inner_dims, gate_outer_dims):
         self.traj_params = traj_params
         self.drone_params = drone_params
         self.gate_poses = gate_poses
         self.gate_inner_dims = gate_inner_dims
         self.gate_outer_dims = gate_outer_dims
-        if self.traj_params.load_traj_from_file:
-            pass
-        else:
-            print("Loading Julia...\n")
-            import julia
-            from julia import Main
-            from julia import DroneRacing
-            global dr
-            dr = DroneRacing
-            dr.warmup()
+        # self.spline_traj = None
+        # if self.traj_params.load_traj_from_file:
+        #     pass
+        # else:
+        #     print("Loading Julia...\n")
+        #     import julia
+        #     from julia import Main
+        #     from julia import DroneRacing
+        #     global dr
+        #     dr = DroneRacing
+        #     dr.warmup()
 
     def quat_to_julia_vec(self,quat):
         vec = [
@@ -117,23 +139,56 @@ class GlobalTrajectoryOptimizer():
         np.save("vel.npy",vel)
         np.save("accel.npy",accel)
         np.save("t_vec.npy",t_vec)
-        return Trajectory(pos,vel,accel,t_vec)
+        traj = Trajectory(pos,vel,accel,t_vec)
+        self.spline_traj = dr.SplineTrajectory(traj.to_julia_traj())
+        return traj
 
-    def cache_trajectory(self):
-        filename = "pos.npy"
 
-        pass
+class MPCController(TrajectoryOptimizer):
+    def __init__(self, traj, traj_params, drone_params):
+        self.traj_params = traj_params
+        self.drone_params = drone_params
+        self.mpc_model = dr.MPCTrajTrackerModel(
+            traj = dr.SplineTrajectory(traj.to_julia_traj()),
+            n = self.traj_params.n, # MPC planning horizon (number of timesteps)
+            dt = self.traj_params.dt,
+            c_stage = self.traj_params.mpc_stage_cost,
+            c_terminal = self.traj_params.mpc_terminal_cost,
+            v_max = self.traj_params.v_max,
+            a_max = self.traj_params.a_max
+        )
+        self.traj = None
+        self.spline_traj = None
+        # self.gate_poses = gate_poses
+        # self.gate_inner_dims = gate_inner_dims
+        # self.gate_outer_dims = gate_outer_dims
+
+    def jl_traj_to_py_traj(self,traj):
+        return Trajectory(traj.pos,traj.vel,traj.accel,traj.t_vec)
+
+    def compute_ref_traj(self,x0,v0,t0):
+        # TODO: warmstart with previous self.traj
+        if self.traj_params.mpc_warmstart == True:
+            jl_traj = self.traj.to_julia_traj()
+            guess = dr.extend_traj(jl_traj,self.mpc_model.dynamics_model,self.mpc_model.dt)
+            JuMP_model = dr.formulate_MPC_problem(self.mpc_model,x0,v0,t0,guess)
+        else:
+            JuMP_model = dr.formulate_MPC_problem(self.mpc_model,x0,v0,t0)
+
+        dr.optimize_trajectory(self.mpc_model,JuMP_model)
+        jl_traj = dr.get_traj(self.mpc_model,JuMP_model)
+        self.traj = self.jl_traj_to_py_traj(jl_traj)
+        self.spline_traj = dr.SplineTrajectory(jl_traj)
+        return self.traj
+
 
 class HumDrumRacer(BaselineRacer):
-    def __init__(self, traj_params, drone_names, drone_i, drone_params,
-             use_vel_constraints=False
-             ):
+    def __init__(self, traj_params, drone_names, drone_i, drone_params):
         super().__init__(drone_name=drone_names[drone_i], viz_traj=True)
         self.drone_names = drone_names
         self.drone_i = drone_i
         self.drone_params = drone_params
         self.traj_params = traj_params
-        self.use_vel_constraints = use_vel_constraints
         self.planning_cycles = 0
         self.is_replanning_thread_active = False
         self.replanning_callback_thread = threading.Thread(
@@ -151,13 +206,17 @@ class HumDrumRacer(BaselineRacer):
             self.gate_outer_dims
             )
 
+        # compute globally optimal trajectory
         TAKEOFF_SHIFT = -1
-
         start_state = self.airsim_client.getMultirotorState()
         start_state.kinematics_estimated.position.z_val += TAKEOFF_SHIFT
         self.traj = self.global_traj_optimizer.compute_global_optimal_trajectory(start_state)
+
+        # setup mpc controller
+        self.mpc_controller = MPCController(self.traj, self.traj_params, self.drone_params)
         self.step = 0
 
+        # setup velocity controller
         velocity_gains = airsim.VelocityControllerGains(
             xGains = airsim.PIDGains(2.0, 0.2, 2.0), # default: 0.2, 0.0, 0.0
             yGains = airsim.PIDGains(2.0, 0.2, 2.0), # default: 0.2, 0.0, 0.0
@@ -180,13 +239,11 @@ class HumDrumRacer(BaselineRacer):
         print("replanning_callback")
         pass
 
-
     def start_replanning_callback_thread(self):
         if not self.is_replanning_thread_active:
             self.is_replanning_thread_active = True
             self.replanning_callback_thread.start()
             print("Started replanning callback thread")
-
 
     def stop_replanning_callback_thread(self):
         if self.is_replanning_thread_active:
@@ -194,6 +251,11 @@ class HumDrumRacer(BaselineRacer):
             self.replanning_callback_thread.join()
             print("Stopped replanning callback thread.")
 
+    def direct_velocity_command(self):
+        idx = np.min([self.step,len(self.traj.t_vec)-1])
+        v = self.traj.vel[idx,:]
+        duration = self.traj_params.dt_planner
+        self.airsim_client.moveByVelocityAsync(v[0],v[1],v[2],duration)
 
     def compute_global_optimal_trajectory(self):
         start_state = self.airsim_client.getMultirotorState()
@@ -210,12 +272,6 @@ class HumDrumRacer(BaselineRacer):
                 self.step = k
                 return self.step
         return self.step
-
-    def direct_velocity_command(self):
-        idx = np.min([self.step,len(self.traj.t_vec)-1])
-        v = self.traj.vel[idx,:]
-        duration = self.traj_params.dt_planner
-        self.airsim_client.moveByVelocityAsync(v[0],v[1],v[2],duration)
 
 
     def update_and_plan(self):
@@ -237,7 +293,7 @@ class HumDrumRacer(BaselineRacer):
 
         # finally issue the command to AirSim.
         clipped_traj = trajectory[self.step:np.min([self.step+self.traj_params.horizon,len(self.traj.t_vec)]), :]
-        if not self.use_vel_constraints:
+        if not self.traj_params.vel_constraints:
             # this returns a future, that we do not call .join() on, as we want to re-issue a new command
             # once we compute the next iteration of our high-level planner
             self.airsim_client.moveOnSplineAsync(
@@ -279,11 +335,15 @@ class HumDrumRacer(BaselineRacer):
         while self.airsim_client.isApiControlEnabled(vehicle_name=self.drone_name):
             # self.update_and_plan()
             # self.direct_velocity_command()
-            self.replanning_callback()
-            time.sleep(self.traj_params.dt_planner)
-            self.step += 1
-            if self.step > len(self.traj.t_vec):
-                break
+            try:
+                self.replanning_callback()
+                time.sleep(self.traj_params.dt_planner)
+                self.step += 1
+                if self.step > len(self.traj.t_vec):
+                    break
+            except KeyboardInterrupt:
+                print("KeyboardInterrupt Received by HumDrumRacer. What to do?")
+                raise
         # self.stop_replanning_callback_thread()
 
 def main(args):
@@ -323,8 +383,7 @@ def main(args):
         traj_params=args,
         drone_names=drone_names,
         drone_i=0,  # index of the first drone
-        drone_params=drone_params,
-        use_vel_constraints=args.vel_constraints)
+        drone_params=drone_params)
     # racer.reset_race()
 
     # racer.load_level(args.level_name)
@@ -357,10 +416,13 @@ if __name__ == "__main__":
     parser.add_argument('--a_max', type=float, default=40.0)
     parser.add_argument('--n', type=int, default=8)
     parser.add_argument('--horizon', type=int, default=10)
+    parser.add_argument('--mpc_warmstart', dest='mpc_warmstart', action='store_true', default=False)
     parser.add_argument('--load_traj_from_file', dest='load_traj_from_file', action='store_true', default=False)
     parser.add_argument('--no_resample', dest='resample', action='store_false', default=True)
     parser.add_argument('--replan_from_lookahead', dest='replan_from_lookahead', action='store_true', default=False)
     parser.add_argument('--lookahead_sec',type=float, default=0.0)
+    parser.add_argument('--mpc_stage_cost',type=float, default=1.0)
+    parser.add_argument('--mpc_terminal_cost',type=float, default=2.0)
     parser.add_argument('--vel_constraints', dest='vel_constraints', action='store_true', default=False)
     parser.add_argument('--level_name', type=str, choices=["Soccer_Field_Easy", "Soccer_Field_Medium", "ZhangJiaJie_Medium", "Building99_Hard",
         "Qualifier_Tier_1", "Qualifier_Tier_2", "Qualifier_Tier_3"], default="Qualifier_Tier_1")
