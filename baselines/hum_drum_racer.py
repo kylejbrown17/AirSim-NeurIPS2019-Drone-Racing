@@ -1,10 +1,8 @@
 from baseline_racer import BaselineRacer
-from gtp_visualize import *
 from utils import to_airsim_vector, to_airsim_vectors
 import airsimneurips as airsim
 import threading
 import argparse
-import gtp
 import numpy as np
 import time
 # Use non interactive matplotlib backend
@@ -19,7 +17,7 @@ import julia
 from julia import Main
 from julia import DroneRacing as dr
 from julia import Quaternions as quats
-dr.warmup()
+# dr.warmup()
 # dr = None
 
 def quat_to_julia_vec(quat):
@@ -76,29 +74,11 @@ class TrajectoryOptimizer():
 ########################### GlobalTrajectoryOptimizer ##########################
 ################################################################################
 class GlobalTrajectoryOptimizer(TrajectoryOptimizer):
-    def __init__(self,traj_params, drone_params, gate_poses, gate_inner_dims, gate_outer_dims):
+    def __init__(self,traj_params, gate_poses, gate_inner_dims, gate_outer_dims):
         self.traj_params = traj_params
-        self.drone_params = drone_params
         self.gate_poses = gate_poses
         self.gate_inner_dims = gate_inner_dims
         self.gate_outer_dims = gate_outer_dims
-
-    # def quat_to_julia_vec(self,quat):
-    #     vec = [
-    #         quat.w_val,
-    #         quat.z_val,
-    #         quat.x_val,
-    #         quat.y_val
-    #     ]
-    #     return vec
-    #
-    # def pos_to_julia_vec(self,pos):
-    #     vec = [
-    #         pos.x_val,
-    #         pos.y_val,
-    #         pos.z_val
-    #     ]
-    #     return vec
 
     def compute_global_optimal_trajectory(self,start_state,
         gate_idxs=[],**kwargs):
@@ -107,7 +87,9 @@ class GlobalTrajectoryOptimizer(TrajectoryOptimizer):
             vel = np.load("vel.npy")
             accel = np.load("accel.npy")
             t_vec = np.load("t_vec.npy")
-            return Trajectory(pos,vel,accel,t_vec)
+            traj = Trajectory(pos,vel,accel,t_vec)
+            self.spline_traj = dr.SplineTrajectory(traj.to_julia_traj())
+            return traj
         # Get current state
         start_pos = start_state.kinematics_estimated.position
         start_vel = start_state.kinematics_estimated.linear_velocity
@@ -162,9 +144,8 @@ class GlobalTrajectoryOptimizer(TrajectoryOptimizer):
 ################################ MPCController #################################
 ################################################################################
 class MPCController(TrajectoryOptimizer):
-    def __init__(self, traj, traj_params, drone_params):
+    def __init__(self, traj, traj_params):
         self.traj_params = traj_params
-        self.drone_params = drone_params
         self.mpc_model = dr.MPCTrajTrackerModel(
             traj = dr.SplineTrajectory(traj.to_julia_traj()),
             n = self.traj_params.horizon, # MPC planning horizon (number of timesteps)
@@ -196,7 +177,6 @@ class MPCController(TrajectoryOptimizer):
         self.spline_traj = dr.SplineTrajectory(jl_traj)
         return self.traj
 
-
 ################################################################################
 ################################# HumDrumRacer #################################
 ################################################################################
@@ -208,25 +188,24 @@ class HumDrumRacer(BaselineRacer):
         self.drone_params = drone_params
         self.traj_params = traj_params
         self.planning_cycles = 0
-        self.start_time = 0.0
-        self.state_estimate = airsim.MultirotorState()
 
-        self.is_replanning_thread_active = False
-        self.replanning_callback_thread = threading.Thread(
-            target=self.repeat_timer_replanning_callback,
-            args=(self.replanning_callback, self.traj_params.dt_planner)
-            )
-        self.is_control_thread_active = False
-        self.control_callback_thread = threading.Thread(
-            target=self.repeat_timer_control_callback,
-            args=(self.control_callback, self.traj_params.dt_controller)
-            )
+        # self.start_time = 0.0
+        # self.state_estimate = airsim.MultirotorState()
+        # self.is_replanning_thread_active = False
+        # self.replanning_callback_thread = threading.Thread(
+        #     target=self.repeat_timer_replanning_callback,
+        #     args=(self.replanning_callback, self.traj_params.dt_planner)
+        #     )
+        # self.is_control_thread_active = False
+        # self.control_callback_thread = threading.Thread(
+        #     target=self.repeat_timer_control_callback,
+        #     args=(self.control_callback, self.traj_params.dt_controller)
+        #     )
 
         self.load_level(args.level_name)
         self.get_ground_truth_gate_poses()
         self.global_traj_optimizer = GlobalTrajectoryOptimizer(
             traj_params,
-            drone_params[drone_i],
             self.gate_poses_ground_truth,
             self.gate_inner_dims,
             self.gate_outer_dims
@@ -239,19 +218,19 @@ class HumDrumRacer(BaselineRacer):
         self.traj = self.global_traj_optimizer.compute_global_optimal_trajectory(start_state)
 
         # setup mpc controller
-        self.mpc_controller = MPCController(self.traj, self.traj_params, self.drone_params)
-        self.step = 0
+        # self.mpc_controller = MPCController(self.traj, self.traj_params)
+        self.step = 1
 
         # setup velocity controller
-        velocity_gains = airsim.VelocityControllerGains(
-            xGains = airsim.PIDGains(2.0, 0.0, 0.0), # default: 0.2, 0.0, 0.0
-            yGains = airsim.PIDGains(2.0, 0.0, 0.0), # default: 0.2, 0.0, 0.0
-            zGains = airsim.PIDGains(2.0, 0.0, 0.0)  # default: 2.0, 0.0, 2.0
-            # xGains = airsim.PIDGains(2.0, 0.2, 2.0), # default: 0.2, 0.0, 0.0
-            # yGains = airsim.PIDGains(2.0, 0.2, 2.0), # default: 0.2, 0.0, 0.0
-            # zGains = airsim.PIDGains(2.0, 0.2, 2.0)  # default: 2.0, 0.0, 2.0
-        )
-        self.airsim_client.setVelocityControllerGains(velocity_gains)
+        # velocity_gains = airsim.VelocityControllerGains(
+        #     xGains = airsim.PIDGains(2.0, 0.0, 0.0), # default: 0.2, 0.0, 0.0
+        #     yGains = airsim.PIDGains(2.0, 0.0, 0.0), # default: 0.2, 0.0, 0.0
+        #     zGains = airsim.PIDGains(2.0, 0.0, 0.0)  # default: 2.0, 0.0, 2.0
+        #     # xGains = airsim.PIDGains(2.0, 0.2, 2.0), # default: 0.2, 0.0, 0.0
+        #     # yGains = airsim.PIDGains(2.0, 0.2, 2.0), # default: 0.2, 0.0, 0.0
+        #     # zGains = airsim.PIDGains(2.0, 0.2, 2.0)  # default: 2.0, 0.0, 2.0
+        # )
+        # self.airsim_client.setVelocityControllerGains(velocity_gains)
         # position_gains = airsim.PositionControllerGains(
         #     xGains = airsim.PIDGains(2.0, 0.0, 0.0), # default: 0.25, 0.0, 0.0
         #     yGains = airsim.PIDGains(2.0, 0.0, 0.0), # default: 0.25, 0.0, 0.0
@@ -386,7 +365,6 @@ class HumDrumRacer(BaselineRacer):
 
 
     def update_and_plan(self):
-        # retrieve the current state from AirSim
         print("CONTROLLER iteration ",self.planning_cycles,": update_and_plan()")
         self.planning_cycles += 1
 
@@ -395,56 +373,33 @@ class HumDrumRacer(BaselineRacer):
         pos = self.airsim_client.simGetObjectPose(self.drone_name).position.to_numpy_array()
         k_truncate = self.truncate_traj(pos,trajectory)
         self.step = k_truncate
+        self.step = 1
         print("STEP: ", self.step, "pos: ", pos, "traj[step,:]: ", trajectory[self.step,:])
 
         # k_truncate == args.n means that the whole trajectory is behind us, and we only issue the last point
-        if k_truncate == self.traj_params.horizon:
-            k_truncate = self.traj_params.horizon - 1
-            print('DEBUG: truncating entire trajectory, k_truncate = {}'.format(k_truncate))
+        # if k_truncate == self.traj_params.horizon:
+        #     k_truncate = self.traj_params.horizon - 1
+        #     print('DEBUG: truncating entire trajectory, k_truncate = {}'.format(k_truncate))
 
-        # finally issue the command to AirSim.
         clipped_traj = trajectory[self.step:np.min([self.step+self.traj_params.horizon,len(self.traj.t_vec)]), :]
-        if not self.traj_params.vel_constraints:
-            # this returns a future, that we do not call .join() on, as we want to re-issue a new command
-            # once we compute the next iteration of our high-level planner
-            self.airsim_client.moveOnSplineAsync(
-                to_airsim_vectors(clipped_traj),
-                add_position_constraint = False,
-                add_velocity_constraint = False,
-                vel_max = self.traj_params.v_max,
-                acc_max = self.traj_params.a_max,
-                viz_traj = self.viz_traj,
-                vehicle_name = self.drone_name,
-                replan_from_lookahead = self.traj_params.replan_from_lookahead,
-                replan_lookahead_sec = self.traj_params.lookahead_sec)
-        else:
-            # Compute the velocity as the difference between waypoints
-            vel_constraints = self.traj.vel[self.step:np.min([self.step+self.traj_params.horizon,len(self.traj.t_vec)]), :]
-            # vel_constraints[1:, :] = trajectory[k_truncate + 1:, :] - trajectory[k_truncate:-1, :]
-            # If we use the whole trajectory, the velocity constraint at the first point
-            # is computed using the current position
-            # if k_truncate == 0:
-            #     vel_constraints[0, :] = trajectory[k_truncate, :] - new_state_i
-            # else:
-            #     vel_constraints[0, :] = trajectory[k_truncate, :] - trajectory[k_truncate - 1, :]
 
-            self.airsim_client.moveOnSplineVelConstraintsAsync(
-                to_airsim_vectors(clipped_traj),
-                to_airsim_vectors(vel_constraints),
-                add_position_constraint=True,
-                add_velocity_constraint=True,
-                vel_max=self.traj_params.v_max + 10,
-                acc_max=self.traj_params.a_max + 10,
-                viz_traj=self.viz_traj,
-                vehicle_name=self.drone_name
-                )
-        return
+        self.airsim_client.moveOnSplineAsync(
+            to_airsim_vectors(clipped_traj),
+            add_position_constraint = False,
+            add_velocity_constraint = True,
+            vel_max = self.traj_params.v_max,
+            acc_max = self.traj_params.a_max,
+            viz_traj = self.viz_traj,
+            vehicle_name = self.drone_name,
+            replan_from_lookahead = self.traj_params.replan_from_lookahead,
+            replan_lookahead_sec = self.traj_params.lookahead_sec)
 
 
     def run(self):
+        # self.step = 3
         # self.start_replanning_callback_thread()
-        self.state_estimate = self.airsim_client_odom.getMultirotorState()
-        self.start_time = self.get_time_stamp() # set start time before entering control loop
+        # self.state_estimate = self.airsim_client_odom.getMultirotorState()
+        # self.start_time = self.get_time_stamp() # set start time before entering control loop
         while self.airsim_client.isApiControlEnabled(vehicle_name=self.drone_name):
             self.update_and_plan()
             # self.direct_velocity_command()
@@ -478,7 +433,7 @@ def main(args):
     if args.level_name == "Qualifier_Tier_3":
         args.race_tier = 3
 
-    # dr.warmup()
+    dr.warmup()
     # ensure you have generated the neurips planning settings file by running python generate_settings_file.py
     racer = HumDrumRacer(
         traj_params=args,
@@ -494,27 +449,25 @@ def main(args):
 
     racer.start_race(args.race_tier)
     racer.initialize_drone()
-    racer.airsim_client.takeoffAsync()
-    # racer.takeoff_with_moveOnSpline()
+    # racer.airsim_client.takeoffAsync()
+    racer.takeoff_with_moveOnSpline()
 
-    # racer.start_image_callback_thread()
-    # racer.start_odometry_callback_thread()
+    racer.start_odometry_callback_thread()
     # racer.start_replanning_callback_thread()
 
-    time.sleep(5.0)  # give opponent a little advantage
+    time.sleep(0.0)  # give opponent a little advantage
     racer.run()
 
-    # racer.stop_image_callback_thread()
-    # racer.stop_odometry_callback_thread()
+    racer.stop_odometry_callback_thread()
     # racer.stop_replanning_callback_thread()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='')
-    parser.add_argument('--dt', type=float, default=0.05)
+    parser.add_argument('--dt', type=float, default=0.25)
     parser.add_argument('--dt_planner', type=float, default=0.2) # replan (mpc) every dt_planner seconds
     parser.add_argument('--dt_controller', type=float, default=0.05) # get control signal every dt_controller seconds
-    parser.add_argument('--dt_min', type=float, default=0.05)
-    parser.add_argument('--r_safe', type=float, default=0.0)
+    parser.add_argument('--dt_min', type=float, default=0.05) #  resampling
+    parser.add_argument('--r_safe', type=float, default=0.2)
     parser.add_argument('--v_max', type=float, default=80.0)
     parser.add_argument('--a_max', type=float, default=40.0)
     parser.add_argument('--n', type=int, default=8)
